@@ -17,8 +17,7 @@ package munch
 
 func (cpu *Cpu6502) brk() {
 	cpu.PC += 1
-	cpu.stackPush(uint8(cpu.PC >> 8))
-	cpu.stackPush(uint8(cpu.PC & 0xff))
+	cpu.stackPushWord(cpu.PC)
 	cpu.php()
 	cpu.sei()
 	cpu.PC = readWord(cpu.bus, 0xfffe)
@@ -414,8 +413,7 @@ func (cpu *Cpu6502) plp() {
 }
 
 func (cpu *Cpu6502) jsr(addr uint16) {
-	cpu.stackPush(uint8((cpu.PC - 1) >> 8))
-	cpu.stackPush(uint8((cpu.PC - 1) & 0xff))
+	cpu.stackPushWord(cpu.PC - 1)
 	cpu.PC = addr
 }
 
@@ -593,6 +591,11 @@ func (cpu *Cpu6502) bit(addr uint16) {
 func (cpu *Cpu6502) stackPush(a uint8) {
 	cpu.bus.Write(uint16(0x100)+uint16(cpu.SP), a)
 	cpu.SP -= 1
+}
+
+func (cpu *Cpu6502) stackPushWord(a uint16) {
+	cpu.stackPush(uint8(a >> 8))
+	cpu.stackPush(uint8(a & 0xff))
 }
 
 func (cpu *Cpu6502) stackPop() uint8 {
