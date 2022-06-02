@@ -52,3 +52,8 @@ The central element is the `bus`. You can attach `Addressable`s to the bus sunch
 the bus. From then on every time `Tick()` is called on the `Bus` the call is propogated to every
 registered `Ticker` object.
 
+## References
+
+* [Fergulator](https://github.com/scottferg/Fergulator) A NES emulator written in Go
+* [redcode's 6502](https://github.com/redcode/6502) A portable 6502 emulator written in C
+* [Nesdev Wiki](https://www.nesdev.org/wiki/Nesdev_Wiki)
