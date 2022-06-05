@@ -30,3 +30,8 @@ func (cpu *Cpu6502) testAndSetZero(b uint8) {
 		cpu.ClearFlag(P_ZERO)
 	}
 }
+
+func (cpu *Cpu6502) testAndSetNZ(b uint8) {
+	cpu.SetFlagValue(P_NEGATIVE, b&0x80 != 0)
+	cpu.SetFlagValue(P_ZERO, b == 0)
+}

@@ -38,8 +38,10 @@ type Rom struct {
 	bytes []uint8
 }
 
-func NewRom(bytes []uint8) *Ram {
-	return &Ram{bytes: bytes}
+func NewRom(bytes []uint8) *Rom {
+	b := make([]byte, len(bytes))
+	copy(b, bytes)
+	return &Rom{bytes: b}
 }
 
 func (r *Rom) Read(addr uint16) uint8 {

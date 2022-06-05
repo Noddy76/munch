@@ -29,12 +29,12 @@ type Cpu6502 struct {
 	P  uint8  // Status register
 	PC uint16 // PC register
 
-	Debug bool
+	Debug          bool
+	DisableDecimal bool
 
 	waitCycles int
 
-	// opCodes [0xff]func()
-	opCodes [0xff]*opcode
+	opCodes [0x100]*opcode
 
 	bus *Bus
 }
@@ -100,13 +100,13 @@ func (cpu *Cpu6502) Tick() error {
 	}
 	argAddr := cpu.PC
 	var arg uint16
-	if op.args == 1 {
+	if op.addrMode.args == 1 {
 		arg = uint16(cpu.bus.Read(argAddr))
-	} else if op.args == 2 {
+	} else if op.addrMode.args == 2 {
 		arg = readWord(cpu.bus, argAddr)
 	}
-	cpu.PC += uint16(op.args)
-	addr := op.addr(cpu, argAddr, arg)
+	cpu.PC += uint16(op.addrMode.args)
+	addr := op.addrMode.addr(cpu, argAddr, arg)
 	op.exec(addr)
 	cpu.waitCycles += op.wait
 
@@ -160,6 +160,13 @@ func (cpu *Cpu6502) Tick() error {
 func (cpu *Cpu6502) SetFlag(flag Flag)      { cpu.P = cpu.P | uint8(flag) }
 func (cpu *Cpu6502) ClearFlag(flag Flag)    { cpu.P = cpu.P &^ uint8(flag) }
 func (cpu *Cpu6502) FlagSet(flag Flag) bool { return cpu.P&uint8(flag) != 0x00 }
+func (cpu *Cpu6502) SetFlagValue(flag Flag, v bool) {
+	if v {
+		cpu.SetFlag(flag)
+	} else {
+		cpu.ClearFlag(flag)
+	}
+}
 
 func (cpu *Cpu6502) Waiting() bool {
 	return cpu.waitCycles > 0
@@ -175,13 +182,13 @@ func (cpu *Cpu6502) Disassemble(addr uint16) (string, uint16) {
 	}
 
 	var arg uint16
-	if op.args == 1 {
+	if op.addrMode.args == 1 {
 		arg = uint16(cpu.bus.Read(addr + 1))
-	} else if op.args == 2 {
+	} else if op.addrMode.args == 2 {
 		arg = readWord(cpu.bus, addr+1)
 	}
 
-	return strings.TrimSpace(op.mne + " " + op.fmt(addr+1, arg)), uint16(op.args + 1)
+	return strings.TrimSpace(op.mne + " " + op.addrMode.fmt(addr+1, arg)), uint16(op.addrMode.args + 1)
 }
 
 func readWord(dev Addressable, a uint16) uint16 {

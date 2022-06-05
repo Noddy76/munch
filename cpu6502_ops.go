@@ -15,11 +15,22 @@
 
 package munch
 
-func (cpu *Cpu6502) brk() {
+func (cpu *Cpu6502) nop(addr uint16) {}
+
+func (c *Cpu6502) slo(a uint16) { c.asl(a); c.ora(a) }
+func (c *Cpu6502) rla(a uint16) { c.rol(a); c.and(a) }
+func (c *Cpu6502) sre(a uint16) { c.lsr(a); c.eor(a) }
+func (c *Cpu6502) rra(a uint16) { c.ror(a); c.adc(a) }
+func (c *Cpu6502) sax(a uint16) { c.bus.Write(a, c.A&c.X) }
+func (c *Cpu6502) lax(a uint16) { c.lda(a); c.ldx(a) }
+func (c *Cpu6502) dcp(a uint16) { c.dec(a); c.cmp(a) }
+func (c *Cpu6502) isc(a uint16) { c.inc(a); c.sbc(a) }
+
+func (cpu *Cpu6502) brk(a uint16) {
 	cpu.PC += 1
 	cpu.stackPushWord(cpu.PC)
-	cpu.php()
-	cpu.sei()
+	cpu.php(a)
+	cpu.sei(a)
 	cpu.PC = readWord(cpu.bus, 0xfffe)
 }
 
@@ -28,6 +39,62 @@ func (cpu *Cpu6502) and(addr uint16) {
 
 	cpu.testAndSetNegative(cpu.A)
 	cpu.testAndSetZero(cpu.A)
+}
+
+func (cpu *Cpu6502) anc(addr uint16) {
+	cpu.and(addr)
+	cpu.SetFlagValue(P_CARRY, cpu.FlagSet(P_NEGATIVE))
+}
+
+func (cpu *Cpu6502) alr(addr uint16) {
+	cpu.and(addr)
+	cpu.lsrAcc(addr)
+}
+
+func (cpu *Cpu6502) arr(addr uint16) {
+	// ARR is weird see http://www.cs.cmu.edu/~dsladic/vice/doc/64doc.txt
+	if cpu.FlagSet(P_DECIMAL_MODE) && !cpu.DisableDecimal {
+		s := cpu.bus.Read(addr)
+		t := cpu.A & s /* Perform the AND. */
+
+		AH := t >> 4 /* Separate the high */
+		AL := t & 15 /* and low nybbles. */
+
+		cpu.A = t >> 1
+		if cpu.FlagSet(P_CARRY) {
+			cpu.A |= 0x80
+		}
+
+		cpu.SetFlagValue(P_NEGATIVE, cpu.FlagSet(P_CARRY)) /* Set the N and */
+		cpu.SetFlagValue(P_ZERO, cpu.A == 0)               /* Z flags traditionally */
+		cpu.SetFlagValue(P_OVERFLOW, (t^cpu.A)&64 != 0)    /* and V flag in a weird way. */
+
+		if AL+(AL&1) > 5 { /* BCD "fixup" for low nybble. */
+			cpu.A = (cpu.A & 0xF0) | ((cpu.A + 6) & 0xF)
+		}
+		cpu.SetFlagValue(P_CARRY, AH+(AH&1) > 5)
+		if cpu.FlagSet(P_CARRY) { /* Set the Carry flag. */
+			cpu.A = (cpu.A + 0x60) & 0xFF
+		} /* BCD "fixup" for high nybble. */
+	} else {
+		// In Binary mode (D flag clear), the instruction effectively does an AND
+		// between the accumulator and the immediate parameter, and then shifts
+		// the accumulator to the right, copying the C flag to the 8th bit. It
+		// sets the Negative and Zero flags just like the ROR would. The ADC code
+		// shows up in the Carry and oVerflow flags. The C flag will be copied
+		// from the bit 6 of the result (which doesn't seem too logical), and the
+		// V flag is the result of an Exclusive OR operation between the bit 6
+		// and the bit 5 of the result.  This makes sense, since the V flag will
+		// be normally set by an Exclusive OR, too.
+		cpu.and(addr)
+		cpu.A >>= 1
+		if cpu.FlagSet(P_CARRY) {
+			cpu.A |= 0b1000_0000
+		}
+		cpu.testAndSetNZ(cpu.A)
+		cpu.SetFlagValue(P_CARRY, cpu.A&0b0100_0000 != 0)
+		cpu.SetFlagValue(P_OVERFLOW, (cpu.A&0x40 != 0) != (cpu.A&0x20 != 0))
+	}
 }
 
 func (cpu *Cpu6502) ora(addr uint16) {
@@ -62,25 +129,25 @@ func (cpu *Cpu6502) inc(addr uint16) {
 	cpu.testAndSetZero(v)
 }
 
-func (cpu *Cpu6502) inx() {
+func (cpu *Cpu6502) inx(addr uint16) {
 	cpu.X += 1
 	cpu.testAndSetNegative(cpu.X)
 	cpu.testAndSetZero(cpu.X)
 }
 
-func (cpu *Cpu6502) iny() {
+func (cpu *Cpu6502) iny(addr uint16) {
 	cpu.Y += 1
 	cpu.testAndSetNegative(cpu.Y)
 	cpu.testAndSetZero(cpu.Y)
 }
 
-func (cpu *Cpu6502) dex() {
+func (cpu *Cpu6502) dex(addr uint16) {
 	cpu.X -= 1
 	cpu.testAndSetNegative(cpu.X)
 	cpu.testAndSetZero(cpu.X)
 }
 
-func (cpu *Cpu6502) dey() {
+func (cpu *Cpu6502) dey(addr uint16) {
 	cpu.Y -= 1
 	cpu.testAndSetNegative(cpu.Y)
 	cpu.testAndSetZero(cpu.Y)
@@ -103,6 +170,13 @@ func (cpu *Cpu6502) cmp(addr uint16) {
 	cpu.compare(cpu.A, v)
 }
 
+func (cpu *Cpu6502) axs(addr uint16) {
+	data := cpu.bus.Read(addr)
+	lhs := cpu.A & cpu.X
+	cpu.X = lhs - data
+	cpu.compare(lhs, data)
+}
+
 func (cpu *Cpu6502) cpx(addr uint16) {
 	v := cpu.bus.Read(addr)
 	cpu.compare(cpu.X, v)
@@ -120,7 +194,7 @@ func (cpu *Cpu6502) adc(addr uint16) {
 		c = 1
 	}
 
-	if cpu.FlagSet(P_DECIMAL_MODE) {
+	if cpu.FlagSet(P_DECIMAL_MODE) && !cpu.DisableDecimal {
 		l := uint16(cpu.A&0x0f) + uint16(v&0x0f) + uint16(c)
 		h := uint16(cpu.A&0xf0) + uint16(v&0xf0)
 
@@ -177,7 +251,7 @@ func (cpu *Cpu6502) sbc(addr uint16) {
 	}
 	t := uint16(cpu.A) - uint16(v) - c
 
-	if cpu.FlagSet(P_DECIMAL_MODE) {
+	if cpu.FlagSet(P_DECIMAL_MODE) && !cpu.DisableDecimal {
 		l := uint16(cpu.A&0x0f) - uint16(v&0x0f) - uint16(c)
 		h := uint16(cpu.A&0xf0) - uint16(v&0xf0)
 
@@ -224,31 +298,31 @@ func (cpu *Cpu6502) sbc(addr uint16) {
 	}
 }
 
-func (cpu *Cpu6502) clc() {
+func (cpu *Cpu6502) clc(addr uint16) {
 	cpu.ClearFlag(P_CARRY)
 }
 
-func (cpu *Cpu6502) sec() {
+func (cpu *Cpu6502) sec(addr uint16) {
 	cpu.SetFlag(P_CARRY)
 }
 
-func (cpu *Cpu6502) cli() {
+func (cpu *Cpu6502) cli(addr uint16) {
 	cpu.ClearFlag(P_DISABLE_IRQ)
 }
 
-func (cpu *Cpu6502) sei() {
+func (cpu *Cpu6502) sei(addr uint16) {
 	cpu.SetFlag(P_DISABLE_IRQ)
 }
 
-func (cpu *Cpu6502) clv() {
+func (cpu *Cpu6502) clv(addr uint16) {
 	cpu.ClearFlag(P_OVERFLOW)
 }
 
-func (cpu *Cpu6502) cld() {
+func (cpu *Cpu6502) cld(addr uint16) {
 	cpu.ClearFlag(P_DECIMAL_MODE)
 }
 
-func (cpu *Cpu6502) sed() {
+func (cpu *Cpu6502) sed(addr uint16) {
 	cpu.SetFlag(P_DECIMAL_MODE)
 }
 
@@ -358,57 +432,57 @@ func (cpu *Cpu6502) sty(addr uint16) {
 	cpu.bus.Write(addr, cpu.Y)
 }
 
-func (cpu *Cpu6502) tax() {
+func (cpu *Cpu6502) tax(addr uint16) {
 	cpu.X = cpu.A
 	cpu.testAndSetNegative(cpu.X)
 	cpu.testAndSetZero(cpu.X)
 }
 
-func (cpu *Cpu6502) txa() {
+func (cpu *Cpu6502) txa(addr uint16) {
 	cpu.A = cpu.X
 	cpu.testAndSetNegative(cpu.A)
 	cpu.testAndSetZero(cpu.A)
 }
 
-func (cpu *Cpu6502) txs() {
+func (cpu *Cpu6502) txs(addr uint16) {
 	cpu.SP = cpu.X
 }
 
-func (cpu *Cpu6502) tay() {
+func (cpu *Cpu6502) tay(addr uint16) {
 	cpu.Y = cpu.A
 	cpu.testAndSetNegative(cpu.Y)
 	cpu.testAndSetZero(cpu.Y)
 }
 
-func (cpu *Cpu6502) tya() {
+func (cpu *Cpu6502) tya(addr uint16) {
 	cpu.A = cpu.Y
 	cpu.testAndSetNegative(cpu.A)
 	cpu.testAndSetZero(cpu.A)
 }
 
-func (cpu *Cpu6502) tsx() {
+func (cpu *Cpu6502) tsx(addr uint16) {
 	cpu.X = cpu.SP
 	cpu.testAndSetZero(cpu.X)
 	cpu.testAndSetNegative(cpu.X)
 }
 
-func (cpu *Cpu6502) pha() {
+func (cpu *Cpu6502) pha(addr uint16) {
 	cpu.stackPush(cpu.A)
 }
 
-func (cpu *Cpu6502) pla() {
+func (cpu *Cpu6502) pla(addr uint16) {
 	cpu.A = cpu.stackPop()
 	cpu.testAndSetNegative(cpu.A)
 	cpu.testAndSetZero(cpu.A)
 }
 
-func (cpu *Cpu6502) php() {
+func (cpu *Cpu6502) php(a uint16) {
 	// BRK and PHP push P OR #$10, so that the IRQ handler can tell
 	// whether the entry was from a BRK or from an /IRQ.
 	cpu.stackPush(cpu.P | uint8(P_BRK_COMMAND) | uint8(P_UNUSED))
 }
 
-func (cpu *Cpu6502) plp() {
+func (cpu *Cpu6502) plp(a uint16) {
 	cpu.P = cpu.stackPop() | uint8(P_BRK_COMMAND) | uint8(P_UNUSED)
 }
 
@@ -417,8 +491,8 @@ func (cpu *Cpu6502) jsr(addr uint16) {
 	cpu.PC = addr
 }
 
-func (cpu *Cpu6502) rti() {
-	cpu.plp()
+func (cpu *Cpu6502) rti(addr uint16) {
+	cpu.plp(addr)
 
 	low := cpu.stackPop()
 	high := cpu.stackPop()
@@ -426,7 +500,7 @@ func (cpu *Cpu6502) rti() {
 	cpu.PC = uint16(high)<<8 + uint16(low)
 }
 
-func (cpu *Cpu6502) rts() {
+func (cpu *Cpu6502) rts(addr uint16) {
 	low := cpu.stackPop()
 	high := cpu.stackPop()
 
@@ -449,7 +523,7 @@ func (cpu *Cpu6502) lsr(addr uint16) {
 	cpu.testAndSetNegative(v)
 	cpu.testAndSetZero(v)
 }
-func (cpu *Cpu6502) lsrAcc() {
+func (cpu *Cpu6502) lsrAcc(a uint16) {
 	if cpu.A&0x01 == 0x01 {
 		cpu.SetFlag(P_CARRY)
 	} else {
@@ -478,7 +552,7 @@ func (cpu *Cpu6502) asl(addr uint16) {
 	cpu.testAndSetNegative(v)
 	cpu.testAndSetZero(v)
 }
-func (cpu *Cpu6502) aslAcc() {
+func (cpu *Cpu6502) aslAcc(a uint16) {
 	if cpu.A&0x80 == 0x80 {
 		cpu.SetFlag(P_CARRY)
 	} else {
@@ -514,7 +588,7 @@ func (cpu *Cpu6502) rol(addr uint16) {
 	cpu.testAndSetNegative(v)
 	cpu.testAndSetZero(v)
 }
-func (cpu *Cpu6502) rolAcc() {
+func (cpu *Cpu6502) rolAcc(a uint16) {
 	carry := cpu.A&0x80 == 0x80
 
 	cpu.A <<= 1
@@ -556,7 +630,7 @@ func (cpu *Cpu6502) ror(addr uint16) {
 	cpu.testAndSetNegative(v)
 	cpu.testAndSetZero(v)
 }
-func (cpu *Cpu6502) rorAcc() {
+func (cpu *Cpu6502) rorAcc(a uint16) {
 	carry := cpu.A&0x01 == 0x01
 
 	cpu.A >>= 1
@@ -586,6 +660,28 @@ func (cpu *Cpu6502) bit(addr uint16) {
 	} else {
 		cpu.ClearFlag(P_OVERFLOW)
 	}
+}
+
+func (c *Cpu6502) shy(a uint16) {
+	high := (a & 0xff00) >> 8
+	a &= 0x00ff
+	if a+uint16(c.X) > 0x00ff {
+		a += (((high & uint16(c.Y)) << 8) + uint16(c.X))
+	} else {
+		a += ((high << 8) + uint16(c.X))
+	}
+	c.bus.Write(a, c.Y&(uint8(high)+1))
+}
+
+func (c *Cpu6502) shx(a uint16) {
+	high := (a & 0xff00) >> 8
+	a &= 0x00ff
+	if a+uint16(c.Y) > 0x00ff {
+		a += (((high & uint16(c.X)) << 8) + uint16(c.Y))
+	} else {
+		a += ((high << 8) + uint16(c.Y))
+	}
+	c.bus.Write(a, c.X&(uint8(high)+1))
 }
 
 func (cpu *Cpu6502) stackPush(a uint8) {
