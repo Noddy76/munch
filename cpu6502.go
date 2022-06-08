@@ -191,6 +191,28 @@ func (cpu *Cpu6502) Disassemble(addr uint16) (string, uint16) {
 	return strings.TrimSpace(op.mne + " " + op.addrMode.fmt(addr+1, arg)), uint16(op.addrMode.args + 1)
 }
 
+func (cpu *Cpu6502) stackPush(a uint8) {
+	cpu.bus.Write(uint16(0x100)+uint16(cpu.SP), a)
+	cpu.SP -= 1
+}
+
+func (cpu *Cpu6502) stackPushWord(a uint16) {
+	cpu.stackPush(uint8(a >> 8))
+	cpu.stackPush(uint8(a & 0xff))
+}
+
+func (cpu *Cpu6502) stackPop() uint8 {
+	cpu.SP += 1
+	return cpu.bus.Read(uint16(0x100) + uint16(cpu.SP))
+}
+
+func (cpu *Cpu6502) stackPopWord() uint16 {
+	low := cpu.stackPop()
+	high := cpu.stackPop()
+
+	return uint16(high)<<8 + uint16(low)
+}
+
 func readWord(dev Addressable, a uint16) uint16 {
 	return uint16(uint16(dev.Read(a))) + (uint16(dev.Read(a+1)) << 8)
 }
