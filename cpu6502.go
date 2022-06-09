@@ -37,6 +37,9 @@ type Cpu6502 struct {
 	opCodes [0x100]*opcode
 
 	bus *Bus
+
+	pendingIrq bool
+	pendingNmi bool
 }
 
 type Flag uint8
@@ -70,10 +73,20 @@ func (cpu *Cpu6502) Reset() {
 	cpu.X = 0
 	cpu.Y = 0
 	cpu.SP = 0xfd
-	cpu.P = 0b00110000
+	cpu.P = 0b00110100
 	cpu.PC = readWord(cpu.bus, 0xfffc)
 
 	cpu.waitCycles = 0
+}
+
+func (cpu *Cpu6502) Irq() {
+	if !cpu.FlagSet(P_DISABLE_IRQ) {
+		cpu.pendingIrq = true
+	}
+}
+
+func (cpu *Cpu6502) Nmi() {
+	cpu.pendingNmi = true
 }
 
 func (cpu *Cpu6502) Tick() error {
@@ -82,7 +95,20 @@ func (cpu *Cpu6502) Tick() error {
 		return nil
 	}
 
-	// TODO: Check interrupts
+	if cpu.pendingIrq || cpu.pendingNmi {
+		cpu.stackPushWord(cpu.PC + 1)
+		cpu.stackPush(cpu.P &^ uint8(P_BRK_COMMAND))
+		cpu.SetFlag(P_DISABLE_IRQ)
+		if cpu.pendingNmi {
+			cpu.PC = readWord(cpu.bus, 0xfffa)
+		} else {
+			cpu.PC = readWord(cpu.bus, 0xfffe)
+		}
+		cpu.waitCycles = 7
+		cpu.pendingIrq = false
+		cpu.pendingNmi = false
+		return nil
+	}
 
 	var debugStr string
 	if cpu.Debug {
