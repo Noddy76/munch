@@ -111,48 +111,7 @@ func (cpu *Cpu6502) Tick() error {
 	cpu.waitCycles += op.wait
 
 	if cpu.Debug {
-		// PC:0014 A:39 X:14 Y:ec SP:fb nv‑BdIzc
-		var statusReg string
-		if cpu.FlagSet(P_NEGATIVE) {
-			statusReg += "N"
-		} else {
-			statusReg += "n"
-		}
-		if cpu.FlagSet(P_OVERFLOW) {
-			statusReg += "V-B"
-		} else {
-			statusReg += "v-B"
-		}
-		if cpu.FlagSet(P_DECIMAL_MODE) {
-			statusReg += "D"
-		} else {
-			statusReg += "d"
-		}
-		if cpu.FlagSet(P_DISABLE_IRQ) {
-			statusReg += "I"
-		} else {
-			statusReg += "i"
-		}
-		if cpu.FlagSet(P_ZERO) {
-			statusReg += "Z"
-		} else {
-			statusReg += "z"
-		}
-		if cpu.FlagSet(P_CARRY) {
-			statusReg += "C"
-		} else {
-			statusReg += "c"
-		}
-		fmt.Printf(
-			"%sPC:%04x A:%02x X:%02x Y:%02x SP:%02x nv‑BdIzc\n",
-			debugStr,
-			cpu.PC,
-			cpu.A,
-			cpu.X,
-			cpu.Y,
-			cpu.SP,
-		)
-
+		fmt.Printf("%s%s\n", debugStr, cpu.StatusString())
 	}
 	return nil
 }
@@ -189,6 +148,27 @@ func (cpu *Cpu6502) Disassemble(addr uint16) (string, uint16) {
 	}
 
 	return strings.TrimSpace(op.mne + " " + op.addrMode.fmt(addr+1, arg)), uint16(op.addrMode.args + 1)
+}
+
+func (cpu *Cpu6502) StatusString() string {
+	low := "nv-bdizc"
+	var statusReg string
+	for i := 7; i >= 0; i-- {
+		if (1<<i)&cpu.P != 0 {
+			statusReg += strings.ToUpper(string(low[7-i]))
+		} else {
+			statusReg += strings.ToLower(string(low[7-i]))
+		}
+	}
+	return fmt.Sprintf(
+		"PC:%04x A:%02x X:%02x Y:%02x SP:%02x %s",
+		cpu.PC,
+		cpu.A,
+		cpu.X,
+		cpu.Y,
+		cpu.SP, statusReg,
+	)
+
 }
 
 func (cpu *Cpu6502) stackPush(a uint8) {

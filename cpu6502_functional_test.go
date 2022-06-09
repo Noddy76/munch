@@ -80,6 +80,7 @@ func TestSbcZeroMinusOne(t *testing.T) {
 	bus := NewBus()
 	bus.Addressable(0x0600, 0xffff, NewRom([]uint8{0xa9, 0x00, 0xe9, 0x01}))
 	cpu := NewCpu6502(bus)
+	cpu.Debug = true
 	cpu.PC = 0x0600
 
 	for cpu.PC != 0x0604 {
@@ -104,5 +105,34 @@ func TestSbcZeroMinusOne(t *testing.T) {
 
 	if cpu.A != 0xfe {
 		t.Fatalf("A is $%02x not $fe", cpu.A)
+	}
+}
+
+func TestBranching(t *testing.T) {
+	rom := []uint8{
+		0xa2, 0x08, //        LDX #$08
+		0xca,             //  DEX
+		0x8e, 0x00, 0x02, //  STX $0200
+		0xe0, 0x03, //        CPX #$03
+		0xd0, 0xf8, //        BNE $0602
+		0x8e, 0x01, 0x02, //  STX $0201
+		0x00, //              BRK
+	}
+
+	bus := NewBus()
+	bus.Addressable(0x0000, 0x05ff, NewRam(0x0600))
+	bus.Addressable(0x0600, uint16(0x0600+len(rom)), NewRom(rom))
+	bus.Addressable(0xfffa, 0xffff, NewRom([]uint8{0x00, 0x00, 0x00, 06, 0x00, 0x05}))
+
+	cpu := NewCpu6502(bus)
+
+	cpu.Debug = true
+
+	for cpu.PC != 0x0500 {
+		bus.Tick()
+	}
+
+	if cpu.X != 3 {
+		t.Errorf("code did not loop enough times")
 	}
 }
